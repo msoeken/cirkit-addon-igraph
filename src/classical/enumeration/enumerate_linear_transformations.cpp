@@ -162,6 +162,19 @@ public:
     return true;
   }
 
+  unsigned row_sum() const
+  {
+    boost::dynamic_bitset<> sum( dimension );
+    for ( const auto& r : get_row_vectors() )
+    {
+      for ( auto c = 0u; c < dimension; ++c )
+      {
+        sum[c] = sum[c] != r[c];
+      }
+    }
+    return sum.to_ulong();
+  }
+
   boolean_square_matrix swap( unsigned row1, unsigned row2 ) const
   {
     boolean_square_matrix other = *this;
@@ -256,6 +269,24 @@ public:
     return matrix.to_ulong();
   }
 
+  friend std::ostream& operator<<( std::ostream& os, const boolean_square_matrix& m )
+  {
+    for ( auto r = 0u; r < m.dimension; ++r )
+    {
+      for ( auto c = 0u; c < m.dimension; ++c )
+      {
+        if ( c > 0u )
+        {
+          os << " ";
+        }
+        os << m.at( r, m.dimension - c - 1 );
+      }
+      os << std::endl;
+    }
+
+    return os;
+  }
+
 private:
   boost::dynamic_bitset<> matrix;
   unsigned                dimension;
@@ -282,6 +313,133 @@ unsigned compute_order( unsigned n )
   return order;
 }
 
+int igraph_is_strongly_regular( const igraph_t *graph, igraph_bool_t *res, igraph_integer_t *k, igraph_integer_t *lambda, igraph_integer_t *mu )
+{
+  int err;
+  *lambda = -1;
+  *mu = -1;
+
+  /* check g is undirected */
+  if ( igraph_is_directed( graph ) ) { return IGRAPH_EINVAL; }
+
+  /* special case if empty */
+  if ( igraph_vcount( graph ) == 0u )
+  {
+    *res = 1;
+    return IGRAPH_SUCCESS;
+  }
+
+  /* check same degree property */
+  igraph_vector_t degrees;
+  igraph_vector_init( &degrees, 0 );
+  igraph_vs_t vertices;
+  igraph_vs_all( &vertices );
+  if ( ( err = igraph_degree( graph, &degrees, vertices, IGRAPH_ALL, 0 ) ) != IGRAPH_SUCCESS )
+  {
+    //return err;
+  }
+  igraph_vs_destroy( &vertices );
+
+  *k = VECTOR( degrees )[0];
+  for ( auto i = 1u; i < igraph_vector_size( &degrees ); ++i )
+  {
+    if ( VECTOR( degrees )[i] != *k )
+    {
+      igraph_vector_destroy( &degrees );
+      std::cout << "[w] not all vertices have same degree" << std::endl;
+      *res = 0;
+      return IGRAPH_SUCCESS;
+    }
+  }
+
+  igraph_vector_destroy( &degrees );
+
+  /* check that neighbors have the same number of neighbors */
+  for ( auto node = 0u; node < igraph_vcount( graph ); ++node )
+  {
+    igraph_vector_t neis;
+    igraph_vector_init( &neis, 0 );
+    if ( ( err = igraph_neighbors( graph, &neis, node, IGRAPH_ALL ) ) != IGRAPH_SUCCESS )
+    {
+      // return err;
+    }
+
+    /* point to the first neighbor */
+    auto cur = 0;
+    auto conn = 0;
+    while ( cur < igraph_vector_size( &neis ) && VECTOR( neis )[cur] < node + 1 ) ++cur;
+
+    for ( auto onode = node + 1; onode < igraph_vcount( graph ); ++onode )
+    {
+      if ( onode == node ) continue;
+
+      if ( cur < igraph_vector_size( &neis ) && VECTOR( neis )[cur] == onode )
+      {
+        /* connected */
+        conn = 1;
+        ++cur;
+      }
+      else
+      {
+        /* not connected */
+        conn = 0;
+      }
+
+      igraph_vector_t oneis;
+      igraph_vector_init( &oneis, 0 );
+      igraph_neighbors( graph, &oneis, onode, IGRAPH_ALL );
+
+      igraph_vector_t inter;
+      igraph_vector_init( &inter, 0 );
+      igraph_vector_intersect_sorted( &neis, &oneis, &inter );
+
+      if ( conn )
+      {
+        if ( *lambda == -1 )
+        {
+          *lambda = igraph_vector_size( &inter );
+        }
+        else if ( *lambda != igraph_vector_size( &inter ) )
+        {
+          igraph_vector_destroy( &inter );
+          igraph_vector_destroy( &oneis );
+          igraph_vector_destroy( &neis );
+
+          std::cout << "[w] not same lambda" << std::endl;
+          *res = 0;
+          return IGRAPH_SUCCESS;
+        }
+      }
+      else
+      {
+        if ( *mu == -1 )
+        {
+          *mu = igraph_vector_size( &inter );
+        }
+        else if ( *mu != igraph_vector_size( &inter ) )
+        {
+          igraph_vector_destroy( &inter );
+          igraph_vector_destroy( &oneis );
+          igraph_vector_destroy( &neis );
+
+          std::cout << "[w] not same mu" << std::endl;
+          *res = 0;
+          return IGRAPH_SUCCESS;
+        }
+      }
+      
+      igraph_vector_destroy( &inter );
+
+      igraph_vector_destroy( &oneis );
+    }
+
+    igraph_vector_destroy( &neis );
+  }
+
+  *res = 1;
+  return IGRAPH_SUCCESS;
+}
+
 /******************************************************************************
  * Public functions                                                           *
  ******************************************************************************/
@@ -289,9 +447,10 @@ unsigned compute_order( unsigned n )
 void enumerate_linear_transformations( unsigned n, const properties::ptr& settings, const properties::ptr& statistics )
 {
   /* settings */
-  const auto abstract = get( settings, "abstract", false );
-  const auto dotname  = get( settings, "dotname",  std::string() );
-  const auto verbose  = get( settings, "verbose",  false );
+  const auto abstract    = get( settings, "abstract",    true );
+  const auto hamiltonian = get( settings, "hamiltonian", false );
+  const auto dotname     = get( settings, "dotname",     std::string() );
+  const auto verbose     = get( settings, "verbose",     false );
   
   std::vector<boolean_square_matrix> node_to_matrix;
   std::unordered_map<unsigned long, unsigned> matrix_to_node;
@@ -345,7 +504,7 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
     }
 
     /* swapping */
-    if ( abstract )
+    if ( !abstract )
     {
       for ( auto row2 = 1; row2 < n; ++row2 )
       {
@@ -367,19 +526,48 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
   igraph_is_connected( p_g, &b_connected, IGRAPH_STRONG );
   L( "[i] is strongly connected: " << b_connected );
 
+  igraph_bool_t b_strongly_regular;
+  igraph_integer_t k, lambda, mu;
+  assert( !igraph_is_strongly_regular( p_g, &b_strongly_regular, &k, &lambda, &mu ) );
+  L( "[i] is strongly regular: " << b_strongly_regular );
+
   /* Hamiltonian path */
-  igraph_t rgraph, * p_rg = &rgraph;
-  igraph_ring( p_rg, order, 0, 0, 1 );
+  if ( hamiltonian )
+  {
+    igraph_t rgraph, * p_rg = &rgraph;
+    igraph_ring( p_rg, order, 0, 0, 1 );
 
-  igraph_bool_t b_iso;
-  igraph_vector_t map;
-  igraph_vector_init( &map, 0 );
-  igraph_subisomorphic_lad( p_rg, p_g, nullptr, &b_iso, &map, nullptr, 0, 0 );
-  L( "[i] found isomorphism: " << b_iso );
+    igraph_bool_t b_iso;
+    igraph_vector_t map;
+    igraph_vector_init( &map, 0 );
+    igraph_subisomorphic_lad( p_rg, p_g, nullptr, &b_iso, &map, nullptr, 0, 0 );
+    L( "[i] found isomorphism: " << b_iso );
 
-  igraph_vector_print( &map );
-  igraph_vector_destroy( &map );
-  igraph_destroy( p_rg );
+    igraph_vector_print( &map );
+    igraph_vector_destroy( &map );
+    igraph_destroy( p_rg );
+  }
+
+  /* row value inspection */
+  for ( const auto& bm : node_to_matrix )
+  {
+    if ( bm.row_sum() == 7u )
+    {
+      std::cout << "[i] matrix with row sum 1: " << std::endl << bm;
+      std::cout << "[i] adjacent matrices have row sums:";
+
+      igraph_vector_t neis;
+      igraph_vector_init( &neis, 0 );
+      igraph_neighbors( p_g, &neis, matrix_to_node[bm.value()], IGRAPH_ALL );
+
+      for ( auto i = 0u; i < igraph_vector_size( &neis ); ++i )
+      {
+        std::cout << " " << node_to_matrix[VECTOR( neis )[i]].row_sum();
+      }
+      std::cout << std::endl;
+      igraph_vector_destroy( &neis );
+    }
+  }
 
   if ( !dotname.empty() )
   {
