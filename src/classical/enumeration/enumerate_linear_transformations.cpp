@@ -38,6 +38,7 @@
 #include <igraph/igraph.h>
 
 #include <core/utils/bitset_utils.hpp>
+#include <core/utils/graph_utils.hpp>
 #include <core/utils/range_utils.hpp>
 
 #define L(x) { if ( verbose ) { std::cout << x << std::endl; } }
@@ -225,7 +226,7 @@ public:
     }
 
     return y;
-  }                                
+  }
 
   std::pair<unsigned, unsigned> compute_swap_permutation( const boolean_square_matrix& other ) const
   {
@@ -237,7 +238,7 @@ public:
     do
     {
       perm[bs.to_ulong()] = multiply( bs ).to_ulong();
-      
+
       inc( bs );
     } while ( bs.any() );
 
@@ -427,7 +428,7 @@ int igraph_is_strongly_regular( const igraph_t *graph, igraph_bool_t *res, igrap
           return IGRAPH_SUCCESS;
         }
       }
-      
+
       igraph_vector_destroy( &inter );
 
       igraph_vector_destroy( &oneis );
@@ -440,6 +441,129 @@ int igraph_is_strongly_regular( const igraph_t *graph, igraph_bool_t *res, igrap
   return IGRAPH_SUCCESS;
 }
 
+struct enumerate_hamiltonians_is_equivalent
+{
+  enumerate_hamiltonians_is_equivalent( const std::vector<boolean_square_matrix>& node_to_matrix )
+    : node_to_matrix( node_to_matrix )
+  {
+  }
+
+  bool operator()( const vertex_t<graph_t<>>& vs, const vertex_t<graph_t<>>& vl ) const
+  {
+    if ( vs == 0u )
+    {
+      return vl == 0u;
+    }
+    if ( vs < prefix.size() && prefix[vs] != 0 )
+    {
+      return node_to_matrix[vl].row_sum() == prefix[vs];
+    }
+    else
+    {
+      return true;
+    }
+  }
+
+private:
+  //const std::vector<unsigned> prefix = {1, 2, 4, 3, 6, 7, 5, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 7};
+  //const std::vector<unsigned> prefix = {1, 2, 4, 3, 6, 7, 5, 3, 2, 4, 7, 1, 5, 6, 5, 4, 6, 1, 3, 7, 2, 7, 4, 1, 3, 5, 2, 6};
+  const std::vector<unsigned> prefix = {7, 6, 5, 2, 4, 1, 3, 5, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 3};
+  const std::vector<boolean_square_matrix>& node_to_matrix;
+};
+
+struct enumerate_hamiltonians_printer
+{
+public:
+  enumerate_hamiltonians_printer( const graph_t<>& sg, const std::vector<boolean_square_matrix>& node_to_matrix )
+    : sg( sg ),
+      node_to_matrix( node_to_matrix )
+  {
+  }
+
+  template<typename CorrespondenceMap1To2, typename CorrespondenceMap2To1>
+  bool operator()( const CorrespondenceMap1To2& f, const CorrespondenceMap2To1& g ) const
+  {
+    std::vector<std::vector<unsigned>> parts( 4u, std::vector<unsigned>( 7u ) );
+
+    for ( auto v = 0u; v < boost::num_vertices( sg ); ++v )
+    {
+      parts[v / 7][v % 7] = node_to_matrix[boost::get( f, v )].row_sum();
+    }
+
+    for ( auto& p : parts )
+    {
+      std::sort( p.begin(), p.end() );
+      for ( auto j = 0u; j < 7u; ++j )
+      {
+        if ( p[j] != j + 1 )
+        {
+          return true;
+        }
+      }
+    }
+
+    for ( auto v = 0u; v < boost::num_vertices( sg ); ++v )
+    {
+      std::cout << " " << node_to_matrix[boost::get( f, v )].row_sum();
+    }
+    std::cout << std::endl;
+
+    for ( auto v = 0u; v < boost::num_vertices( sg ); ++v )
+    {
+      std::cout << " " << boost::get( f, v );
+    }
+    std::cout << std::endl;
+
+    for ( auto i = 0u; i < 4u; ++i )
+    {
+      std::cout << " " << node_to_matrix[boost::get( f, 7 * i )].row_sum();
+    }
+    std::cout << std::endl << std::endl;
+
+    return true;
+  }
+
+private:
+  const graph_t<>& sg;
+  const std::vector<boolean_square_matrix>& node_to_matrix;
+};
+
+void enumerate_hamiltonians( const igraph_t* graph, const std::vector<boolean_square_matrix>& node_to_matrix )
+{
+  graph_t<> g;
+  for ( auto i = 0; i < igraph_vcount( graph ); ++i )
+  {
+    add_vertex( g );
+  }
+
+  igraph_es_t es;
+  igraph_es_all( &es, IGRAPH_EDGEORDER_ID );
+
+  igraph_eit_t eit;
+  igraph_eit_create( graph, es, &eit );
+
+  while ( !IGRAPH_EIT_END( eit ) )
+  {
+    const auto eid = IGRAPH_EIT_GET( eit );
+
+    igraph_integer_t from, to;
+    igraph_edge( graph, eid, &from, &to );
+
+    add_edge( from, to, g );
+
+    IGRAPH_EIT_NEXT( eit );
+  }
+
+  igraph_eit_destroy( &eit );
+  igraph_es_destroy( &es );
+
+  const auto rg = ring_graph( boost::num_vertices( g ) );
+  boost::vf2_subgraph_mono( rg, g,
+                            enumerate_hamiltonians_printer( rg, node_to_matrix ),
+                            boost::vertex_order_by_mult( rg ),
+                            boost::vertices_equivalent( enumerate_hamiltonians_is_equivalent( node_to_matrix ) ) );
+}
+
 /******************************************************************************
  * Public functions                                                           *
  ******************************************************************************/
@@ -449,9 +573,10 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
   /* settings */
   const auto abstract    = get( settings, "abstract",    true );
   const auto hamiltonian = get( settings, "hamiltonian", false );
+  const auto hamilenum   = get( settings, "hamilenum",   true );
   const auto dotname     = get( settings, "dotname",     std::string() );
   const auto verbose     = get( settings, "verbose",     false );
-  
+
   std::vector<boolean_square_matrix> node_to_matrix;
   std::unordered_map<unsigned long, unsigned> matrix_to_node;
 
@@ -464,7 +589,7 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
   }
   L( "[i] order = " << order );
   igraph_empty( p_g, order, IGRAPH_UNDIRECTED );
-  
+
   boost::dynamic_bitset<> bs( n * n );
 
   /* create vertices */
@@ -548,13 +673,20 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
     igraph_destroy( p_rg );
   }
 
+  if ( hamilenum )
+  {
+    enumerate_hamiltonians( p_g, node_to_matrix );
+  }
+
   /* row value inspection */
+  const auto from_sum = 2u;
+  const auto to_sum = 3u;
   for ( const auto& bm : node_to_matrix )
   {
-    if ( bm.row_sum() == 7u )
+    if ( bm.row_sum() == from_sum )
     {
-      std::cout << "[i] matrix with row sum 1: " << std::endl << bm;
-      std::cout << "[i] adjacent matrices have row sums:";
+      std::cout << "[i] matrix with row sum " << from_sum << ": " << std::endl << bm;
+      //std::cout << "[i] adjacent matrices have row sums:";
 
       igraph_vector_t neis;
       igraph_vector_init( &neis, 0 );
@@ -562,9 +694,13 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
 
       for ( auto i = 0u; i < igraph_vector_size( &neis ); ++i )
       {
-        std::cout << " " << node_to_matrix[VECTOR( neis )[i]].row_sum();
+        const auto& om = node_to_matrix[VECTOR( neis )[i]];
+        if ( om.row_sum() == to_sum )
+        {
+          std::cout << "[i] connects to: " << std::endl << om;
+        }
       }
-      std::cout << std::endl;
+      //std::cout << std::endl;
       igraph_vector_destroy( &neis );
     }
   }
