@@ -31,6 +31,7 @@
 #include <unordered_map>
 
 #include <boost/dynamic_bitset.hpp>
+#include <boost/format.hpp>
 #include <boost/graph/graphviz.hpp>
 #include <boost/graph/isomorphism.hpp>
 #include <boost/graph/vf2_sub_graph_iso.hpp>
@@ -40,6 +41,8 @@
 #include <core/utils/bitset_utils.hpp>
 #include <core/utils/graph_utils.hpp>
 #include <core/utils/range_utils.hpp>
+#include <core/utils/string_utils.hpp>
+#include <classical/utils/truth_table_utils.hpp>
 
 #define L(x) { if ( verbose ) { std::cout << x << std::endl; } }
 
@@ -226,6 +229,44 @@ public:
     }
 
     return y;
+  }
+
+  /* other can be sorted, but this must be as we want it
+     we assume it's possible */
+  std::pair<unsigned, unsigned> get_add_to_rows( const boolean_square_matrix& other ) const
+  {
+    const auto vectors = get_row_vectors();
+    const auto ovectors = other.get_row_vectors();
+
+    auto to = 0u, from = 0u;
+    boost::dynamic_bitset<> to_row;
+    boost::dynamic_bitset<> from_row;
+
+    for ( const auto& r : index( vectors ) )
+    {
+      const auto it = std::find( ovectors.begin(), ovectors.end(), r.value );
+      if ( it == ovectors.end() )
+      {
+        to = r.index;
+        to_row = r.value;
+      }
+    }
+
+    for ( const auto& r : ovectors )
+    {
+      const auto it = std::find( vectors.begin(), vectors.end(), r );
+      if ( it == vectors.end() )
+      {
+        from_row = r;
+      }
+    }
+
+    from_row ^= to_row;
+    from = std::distance( vectors.begin(), std::find( vectors.begin(), vectors.end(), from_row ) );
+
+    //std::cout << boost::format( "[i] added %s [%d] to %s [%d]" ) % to_string( from_row ) % from % to_string( to_row ) % to << std::endl;
+
+    return {from, to};
   }
 
   std::pair<unsigned, unsigned> compute_swap_permutation( const boolean_square_matrix& other ) const
@@ -573,12 +614,14 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
   /* settings */
   const auto abstract    = get( settings, "abstract",    true );
   const auto hamiltonian = get( settings, "hamiltonian", false );
-  const auto hamilenum   = get( settings, "hamilenum",   true );
+  const auto hamilenum   = get( settings, "hamilenum",   false );
+  const auto frompath    = get( settings, "frompath",    std::string() );
   const auto dotname     = get( settings, "dotname",     std::string() );
   const auto verbose     = get( settings, "verbose",     false );
 
   std::vector<boolean_square_matrix> node_to_matrix;
   std::unordered_map<unsigned long, unsigned> matrix_to_node;
+  std::vector<unsigned> edge_to_operation;
 
   igraph_t graph, * p_g = &graph;
 
@@ -624,6 +667,10 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
         if ( w > v )
         {
           igraph_add_edge( p_g, v, w );
+
+          igraph_integer_t eid;
+          igraph_get_eid( p_g, &eid, v, w, 0, 0 );
+          edge_to_operation.push_back( from_row * 3 + to_row );
         }
       }
     }
@@ -678,30 +725,88 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
     enumerate_hamiltonians( p_g, node_to_matrix );
   }
 
-  /* row value inspection */
-  const auto from_sum = 2u;
-  const auto to_sum = 3u;
-  for ( const auto& bm : node_to_matrix )
+  /* derive delta-swap sequence from path */
+  if ( !frompath.empty() )
   {
-    if ( bm.row_sum() == from_sum )
+    std::cout << "[i] derive delta-swap sequence from path: " << frompath << std::endl;
+    std::vector<unsigned> path;
+    parse_string_list( path, frompath, " " );
+
+    unsigned delta, theta;
+    const auto& swaps = tt_store::i().swaps( n );
+
+    auto curm = node_to_matrix[path[0u]];
+
+    std::cout << curm;
+    for ( auto i = 0u; i < swaps.size(); ++i )
     {
-      std::cout << "[i] matrix with row sum " << from_sum << ": " << std::endl << bm;
-      //std::cout << "[i] adjacent matrices have row sums:";
+      auto nextm = curm.swap( swaps[i], swaps[i] + 1 );
+      std::tie( delta, theta ) = nextm.compute_swap_permutation( curm );
+      std::cout << boost::format( "[i] swap %d with %d (%d, %d)" ) % swaps[i] % ( swaps[i] + 1 ) % delta % theta << std::endl;
+      std::cout << nextm;
+      curm = nextm;
+    }
 
-      igraph_vector_t neis;
-      igraph_vector_init( &neis, 0 );
-      igraph_neighbors( p_g, &neis, matrix_to_node[bm.value()], IGRAPH_ALL );
+    auto next = 1u;
+    while ( next < path.size() )
+    {
+      // const auto v = std::min( path[next - 1], path[next] );
+      // const auto w = std::max( path[next - 1], path[next] );
+      // igraph_integer_t eid;
+      // igraph_get_eid( p_g, &eid, v, w, 0, 0 );
+      // const auto op = edge_to_operation[eid];
+      // const auto to = op % n;
+      // const auto from = ( op - to ) / n;
+      // std::cout << boost::format( "[i] add %d to %d" ) % from % to << std::endl;
 
-      for ( auto i = 0u; i < igraph_vector_size( &neis ); ++i )
+      unsigned from_row, to_row;
+      std::tie( from_row, to_row ) = curm.get_add_to_rows( node_to_matrix[path[next]] );
+
+      auto nextm = curm.add_to( from_row, to_row );
+      std::tie( delta, theta ) = nextm.compute_swap_permutation( curm );
+      std::cout << boost::format( "[i] add %d to %d (%d, %d)" ) % from_row % to_row % delta % theta << std::endl;
+      std::cout << nextm;
+      curm = nextm;
+
+      for ( auto i = 0u; i < swaps.size(); ++i )
       {
-        const auto& om = node_to_matrix[VECTOR( neis )[i]];
-        if ( om.row_sum() == to_sum )
-        {
-          std::cout << "[i] connects to: " << std::endl << om;
-        }
+        auto nextm = curm.swap( swaps[i], swaps[i] + 1 );
+        std::tie( delta, theta ) = nextm.compute_swap_permutation( curm );
+        std::cout << boost::format( "[i] swap %d with %d (%d, %d)" ) % swaps[i] % ( swaps[i] + 1 ) % delta % theta << std::endl;
+        std::cout << nextm;
+        curm = nextm;
       }
-      //std::cout << std::endl;
-      igraph_vector_destroy( &neis );
+      ++next;
+    }
+  }
+
+  /* row value inspection */
+  if ( false )
+  {
+    const auto from_sum = 2u;
+    const auto to_sum = 3u;
+    for ( const auto& bm : node_to_matrix )
+    {
+      if ( bm.row_sum() == from_sum )
+      {
+        std::cout << "[i] matrix with row sum " << from_sum << ": " << std::endl << bm;
+        //std::cout << "[i] adjacent matrices have row sums:";
+
+        igraph_vector_t neis;
+        igraph_vector_init( &neis, 0 );
+        igraph_neighbors( p_g, &neis, matrix_to_node[bm.value()], IGRAPH_ALL );
+
+        for ( auto i = 0u; i < igraph_vector_size( &neis ); ++i )
+        {
+          const auto& om = node_to_matrix[VECTOR( neis )[i]];
+          if ( om.row_sum() == to_sum )
+          {
+            std::cout << "[i] connects to: " << std::endl << om;
+          }
+        }
+        //std::cout << std::endl;
+        igraph_vector_destroy( &neis );
+      }
     }
   }
 

@@ -51,6 +51,7 @@ protected:
 
 private:
   unsigned num_vars = 3u;
+  std::string frompath;
   std::string dotname;
 };
 

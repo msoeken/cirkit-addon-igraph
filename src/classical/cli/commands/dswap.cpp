@@ -42,6 +42,7 @@ dswap_command:: dswap_command( const environment::ptr& env )
 {
   opts.add_options()
     ( "num_vars,n", value_with_default( &num_vars ), "number of variables" )
+    ( "frompath",   value( &frompath ),              "generate delta-swap sequence from path" )
     ( "dotname",    value( &dotname ),               "write graph to this file" )
     ;
   add_positional_option( "num_vars" );
@@ -55,6 +56,10 @@ bool dswap_command::execute()
   if ( is_set( "dotname" ) )
   {
     settings->set( "dotname", dotname );
+  }
+  if ( is_set( "frompath" ) )
+  {
+    settings->set( "frompath", frompath );
   }
 
   enumerate_linear_transformations( num_vars, settings );
