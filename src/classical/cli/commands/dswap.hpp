@@ -36,7 +36,7 @@
 #ifndef CLI_DSWAP_COMMAND_HPP
 #define CLI_DSWAP_COMMAND_HPP
 
-#include <core/cli/cirkit_command.hpp>
+#include <cli/cirkit_command.hpp>
 
 namespace cirkit
 {

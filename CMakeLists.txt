@@ -6,6 +6,7 @@ add_cirkit_library(
   AUTO_DIRS src
   USE
     cirkit_classical
+    cirkit_cli
     ${PC_LIBIGRAPH_LIBRARY_DIRS}/libigraph${CMAKE_SHARED_LIBRARY_SUFFIX}
   INCLUDE
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
