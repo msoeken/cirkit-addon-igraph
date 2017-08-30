@@ -1,5 +1,5 @@
 find_package(PkgConfig)
-pkg_check_modules(PC_LIBIGRAPH QUIET igraph)
+pkg_check_modules(PC_LIBIGRAPH REQUIRED IMPORTED_TARGET igraph)
 
 add_cirkit_library(
   NAME cirkit_igraph
@@ -7,7 +7,7 @@ add_cirkit_library(
   USE
     cirkit_classical
     cirkit_cli
-    ${PC_LIBIGRAPH_LIBRARY_DIRS}/libigraph${CMAKE_SHARED_LIBRARY_SUFFIX}
+    PkgConfig::PC_LIBIGRAPH
   INCLUDE
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
     PUBLIC ${PC_LIBIGRAPH_INCLUDE_DIRS}
