@@ -347,7 +347,7 @@ unsigned compute_order( unsigned n )
 {
   unsigned order = 1u;
 
-  for ( auto i = 0; i < n; ++i )
+  for ( unsigned i = 0; i < n; ++i )
   {
     order *= ( 1 << n ) - ( 1 << i );
   }
@@ -646,7 +646,7 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
     } );
 
   /* create edges */
-  for ( auto v = 0; v < node_to_matrix.size(); ++v )
+  for ( size_t v = 0; v < node_to_matrix.size(); ++v )
   {
     const auto& bm = node_to_matrix[v];
 
@@ -678,9 +678,9 @@ void enumerate_linear_transformations( unsigned n, const properties::ptr& settin
     /* swapping */
     if ( !abstract )
     {
-      for ( auto row2 = 1; row2 < n; ++row2 )
+      for ( unsigned row2 = 1u; row2 < n; ++row2 )
       {
-        for ( auto row1 = 0; row1 < row2; ++row1 )
+        for ( unsigned row1 = 0u; row1 < row2; ++row1 )
         {
           const auto other = bm.swap( row1, row2 );
           const auto w = matrix_to_node[other.value()];

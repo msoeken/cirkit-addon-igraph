@@ -42,6 +42,9 @@ dswap_command:: dswap_command( const environment::ptr& env )
 {
   opts.add_options()
     ( "num_vars,n", value_with_default( &num_vars ), "number of variables" )
+          ("abstract","work on the equivalence classes")
+          ("hamiltonian", "check for and compute a hamiltonian path")
+          ("hamilenum", "enumerate hamiltonian paths")
     ( "frompath",   value( &frompath ),              "generate delta-swap sequence from path" )
     ( "dotname",    value( &dotname ),               "write graph to this file" )
     ;
@@ -61,6 +64,12 @@ bool dswap_command::execute()
   {
     settings->set( "frompath", frompath );
   }
+
+  settings->set("abstract", is_set("abstract"));
+  settings->set("hamiltonian", is_set("hamiltonian"));
+  settings->set("hamilenum", is_set("hamilenum"));
+
+
 
   enumerate_linear_transformations( num_vars, settings );
 
