@@ -397,7 +397,7 @@ int igraph_is_strongly_regular( const igraph_t *graph, igraph_bool_t *res, igrap
   igraph_vector_destroy( &degrees );
 
   /* check that neighbors have the same number of neighbors */
-  for ( auto node = 0u; node < igraph_vcount( graph ); ++node )
+  for ( auto node = 0; node < igraph_vcount( graph ); ++node )
   {
     igraph_vector_t neis;
     igraph_vector_init( &neis, 0 );
